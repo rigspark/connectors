@@ -1,0 +1,5 @@
+[toolchain]
+# Matches rigspark and rigspark-crew.
+channel = "1.98.1"
+profile = "minimal"
+components = ["clippy", "rustfmt"]

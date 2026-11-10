@@ -1,0 +1,63 @@
+name: release
+
+# Tag <connector>-v<version>, e.g. youtube-mcp-v0.1.0
+on:
+  push:
+    tags: ["*-mcp-v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      name: ${{ steps.p.outputs.name }}
+      version: ${{ steps.p.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: p
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          name="${tag%-v*}"; version="${tag##*-v}"
+          test -d "connectors/$name" || { echo "no connector $name"; exit 1; }
+          grep -q "^version = \"$version\"" "connectors/$name/connector.toml" || { echo "connector.toml version != $version"; exit 1; }
+          echo "name=$name" >> "$GITHUB_OUTPUT"; echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: meta
+    strategy:
+      matrix:
+        include:
+          - { os: macos-latest, target: aarch64-apple-darwin }
+          - { os: macos-latest, target: x86_64-apple-darwin }
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup target add ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p ${{ needs.meta.outputs.name }}
+        if: matrix.target != 'x86_64-apple-darwin'
+      - run: cargo build --release --locked -p ${{ needs.meta.outputs.name }} --target ${{ matrix.target }}
+      - name: package
+        run: |
+          n=${{ needs.meta.outputs.name }}; v=${{ needs.meta.outputs.version }}; t=${{ matrix.target }}
+          mkdir -p dist/pkg
+          cp "target/$t/release/$n" "connectors/$n/connector.toml" "connectors/$n/README.md" dist/pkg/
+          tar -C dist/pkg -czf "dist/$n-$v-$t.tar.gz" .
+          (cd dist && shasum -a 256 "$n-$v-$t.tar.gz" > "$n-$v-$t.tar.gz.sha256")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*.tar.gz*
+
+  publish:
+    needs: [meta, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes

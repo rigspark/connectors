@@ -1,0 +1,66 @@
+# What the RigSpark crew (or any MCP host) needs to know to run this connector.
+# tests/manifest.rs keeps this file and the server's tool list identical.
+
+[connector]
+name = "youtube-mcp"
+version = "0.1.0"
+description = "Public YouTube data: search, videos, channels, playlists, comments and trending (YouTube Data API v3). Read-only."
+transport = "stdio"
+command = "youtube-mcp"
+
+[[env]]
+name = "YOUTUBE_API_KEY"
+description = "YouTube Data API v3 key from a Google Cloud project with the API enabled. Restrict it to the YouTube Data API."
+required = true
+secret = true
+
+[[env]]
+name = "YOUTUBE_API_BASE"
+description = "Override the API root. Leave unset in production."
+required = false
+secret = false
+
+# cost = YouTube quota units per call (default budget: 10,000 units/day per key)
+
+[[tools]]
+name = "search"
+access = "read"
+cost = 100
+notes = "101 when `channel` is a @handle (one extra lookup)."
+
+[[tools]]
+name = "get_videos"
+access = "read"
+cost = 1
+
+[[tools]]
+name = "get_channel"
+access = "read"
+cost = 1
+
+[[tools]]
+name = "channel_videos"
+access = "read"
+cost = 3
+
+[[tools]]
+name = "channel_playlists"
+access = "read"
+cost = 1
+notes = "2 when given a @handle."
+
+[[tools]]
+name = "playlist_items"
+access = "read"
+cost = 1
+
+[[tools]]
+name = "video_comments"
+access = "read"
+cost = 1
+notes = "Comment text is untrusted third-party content; quote it to the model as data."
+
+[[tools]]
+name = "trending_videos"
+access = "read"
+cost = 1
