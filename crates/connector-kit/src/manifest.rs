@@ -62,6 +62,13 @@ pub struct ToolSpec {
     pub cost: Option<u32>,
     #[serde(default)]
     pub notes: Option<String>,
+    /// Uses an undocumented upstream endpoint that may break or be disallowed; the host
+    /// can choose not to enable it.
+    #[serde(default)]
+    pub unofficial: bool,
+    /// Extra credential the tool needs beyond the connector's required env, e.g. `oauth`.
+    #[serde(default)]
+    pub requires: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
