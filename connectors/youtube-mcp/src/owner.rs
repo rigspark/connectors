@@ -523,14 +523,29 @@ pub fn check_path(path: &str, allowed: Option<&Path>) -> Result<PathBuf, YouTube
         .canonicalize()
         .map_err(|e| YouTubeError::Invalid(format!("YOUTUBE_MCP_UPLOAD_DIR is not usable: {e}")))?;
     let p = Path::new(path);
+    // `..` can only lead out of the folder (or nowhere), so refuse it before touching the disk;
+    // otherwise the answer depends on where the folder sits.
+    if p.components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(YouTubeError::Invalid(format!(
+            "{} is outside the upload folder {}",
+            trim(path, 200),
+            dir.display()
+        )));
+    }
     let p = if p.is_relative() {
         dir.join(p)
     } else {
         p.to_path_buf()
     };
-    let real = p
-        .canonicalize()
-        .map_err(|_| YouTubeError::Invalid(format!("no such file: {}", trim(path, 200))))?;
+    let real = p.canonicalize().map_err(|_| {
+        YouTubeError::Invalid(format!(
+            "no such file in the upload folder {}: {}",
+            dir.display(),
+            trim(path, 200)
+        ))
+    })?;
     if !real.starts_with(&dir) {
         return Err(YouTubeError::Invalid(format!(
             "{} is outside the upload folder {}",
@@ -708,5 +723,39 @@ pub async fn upload_video(
             "upload_status": v["status"]["uploadStatus"],
             "bytes": size,
         }));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn msg(r: Result<PathBuf, YouTubeError>) -> String {
+        r.expect_err("should be refused").to_string()
+    }
+
+    #[test]
+    fn upload_paths_stay_in_the_folder_wherever_it_sits() {
+        let root = tempfile::tempdir().unwrap();
+        // deep like macOS's /var/folders/…/T/…, so `../..` lands on nothing
+        let dir = root.path().join("a/b/c/uploads");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("ok.jpg"), b"x").unwrap();
+        std::fs::write(root.path().join("a/b/secret.txt"), b"x").unwrap();
+        let d = Some(dir.as_path());
+
+        assert!(check_path("ok.jpg", d).unwrap().ends_with("ok.jpg"));
+        for p in ["../../etc/passwd", "../../secret.txt", "sub/../../ok.jpg"] {
+            assert!(
+                msg(check_path(p, d)).contains("outside the upload folder"),
+                "{p}"
+            );
+        }
+        let outside = root.path().join("a/b/secret.txt");
+        assert!(
+            msg(check_path(outside.to_str().unwrap(), d)).contains("outside the upload folder")
+        );
+        assert!(msg(check_path("missing.mp4", d)).contains("no such file in the upload folder"));
+        assert!(msg(check_path("ok.jpg", None)).contains("YOUTUBE_MCP_UPLOAD_DIR"));
     }
 }
