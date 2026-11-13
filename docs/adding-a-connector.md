@@ -2,7 +2,10 @@
 
 1. **Scaffold.** `scripts/new-connector.sh <name>-mcp <SECRET_ENV>` creates
    `connectors/<name>-mcp` with the standard layout, a placeholder tool, a manifest and both tests.
-   The workspace picks it up automatically (`members = ["connectors/*"]`).
+   The workspace picks it up automatically (`members = ["connectors/*-mcp", "connectors/*/*-mcp"]`).
+   To group it by category (like `connectors/fitness/whoop-mcp`), move the folder into
+   `connectors/<category>/`; the workspace, CI and release workflows find it there too. Crate
+   names must stay unique across categories, and must end in `-mcp`.
 
 2. **Upstream client (`src/api.rs`).**
    - Build on `connector_kit::HttpClient`. Put the credential in a header with

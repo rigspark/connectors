@@ -1,0 +1,140 @@
+# What the RigSpark crew (or any MCP host) needs to know to run this connector.
+# tests/manifest.rs keeps this file and the server's tool catalog identical.
+#
+# whoop-mcp is the Rust WHOOP server imported from shashankswe2020-ux/whoop-mcp-rs.
+# It speaks MCP itself (no connector-kit / rmcp) and does its own WHOOP OAuth: on the
+# first request it opens a browser for consent and stores the refresh token locally.
+# HTTP transport and the claude.ai OAuth connector are optional; see README.md.
+
+[connector]
+name = "whoop-mcp"
+version = "0.2.0"
+description = "The user's own WHOOP data: profile, recovery, sleep, HRV, strain, workouts, cycles and personal analytics (trends, baselines, sleep debt). Read-only."
+transport = "stdio"
+command = "whoop-mcp"
+
+[[env]]
+name = "WHOOP_CLIENT_ID"
+description = "Client ID of a WHOOP Developer App (developer.whoop.com) with redirect URL http://localhost:3000/callback."
+required = true
+secret = true
+
+[[env]]
+name = "WHOOP_CLIENT_SECRET"
+description = "Client secret of the same WHOOP Developer App."
+required = true
+secret = true
+
+[[env]]
+name = "WHOOP_REDIRECT_URI"
+description = "Loopback OAuth callback. Default http://localhost:3000/callback."
+required = false
+secret = false
+
+[[env]]
+name = "WHOOP_MCP_PRIVACY_MODE"
+description = "`standard` (default, all 16 tools) or `aggregate` (only the five summary tools, date-only periods)."
+required = false
+secret = false
+
+[[env]]
+name = "WHOOP_MCP_DISABLE_RESOURCES"
+description = "Set to 1 to disable MCP resources."
+required = false
+secret = false
+
+[[env]]
+name = "MCP_TRANSPORT"
+description = "`stdio` (default), `http` or `both`. The crew uses stdio."
+required = false
+secret = false
+
+[[env]]
+name = "MCP_AUTH_TOKEN"
+description = "Bearer token required by the HTTP transport. Unused on stdio."
+required = false
+secret = true
+
+[[env]]
+name = "LOG_LEVEL"
+description = "stderr log level, default info."
+required = false
+secret = false
+
+[[env]]
+name = "WHOOP_MCP_TELEMETRY"
+description = "Opt-in aggregate usage telemetry. Off unless set; DO_NOT_TRACK also disables it."
+required = false
+secret = false
+
+# Health data is personal: results describe the user's body, not third-party text,
+# but treat them as sensitive and don't copy them anywhere the user didn't ask for.
+
+[[tools]]
+name = "get_profile"
+access = "read"
+
+[[tools]]
+name = "get_body_measurement"
+access = "read"
+
+[[tools]]
+name = "get_recovery_collection"
+access = "read"
+
+[[tools]]
+name = "get_sleep_collection"
+access = "read"
+
+[[tools]]
+name = "get_workout_collection"
+access = "read"
+
+[[tools]]
+name = "get_cycle_collection"
+access = "read"
+
+[[tools]]
+name = "get_sleep_by_id"
+access = "read"
+
+[[tools]]
+name = "get_workout_by_id"
+access = "read"
+
+[[tools]]
+name = "get_cycle_by_id"
+access = "read"
+
+[[tools]]
+name = "get_weekly_summary"
+access = "read"
+notes = "Also served in aggregate privacy mode."
+
+[[tools]]
+name = "compare_periods"
+access = "read"
+notes = "Also served in aggregate privacy mode."
+
+[[tools]]
+name = "get_trend"
+access = "read"
+notes = "Also served in aggregate privacy mode."
+
+[[tools]]
+name = "get_today"
+access = "read"
+
+[[tools]]
+name = "get_calendar"
+access = "read"
+
+[[tools]]
+name = "get_baselines"
+access = "read"
+notes = "Also served in aggregate privacy mode."
+
+[[tools]]
+name = "get_sleep_debt"
+access = "read"
+notes = "Also served in aggregate privacy mode."

@@ -1,5 +1,6 @@
 [workspace]
-members = ["crates/connector-kit", "connectors/*"]
+# Connectors live at connectors/<name>-mcp or in a category folder, connectors/<category>/<name>-mcp.
+members = ["crates/connector-kit", "connectors/*-mcp", "connectors/*/*-mcp"]
 resolver = "3"
 
 [workspace.package]
