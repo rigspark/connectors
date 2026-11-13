@@ -9,12 +9,14 @@ Private. Internal to RigSpark.
 | Connector | What it does | Access | Needs |
 | --- | --- | --- | --- |
 | [`youtube-mcp`](connectors/youtube-mcp) | vidIQ-style YouTube research (keywords, outliers, hot videos, competitors, comment insights, title/SEO scores, earnings, transcripts), your own analytics and a one-call channel health check, video edits/uploads, local history. 32 tools, 6 prompts | read + 5 OAuth writes | `YOUTUBE_API_KEY` (+ OAuth for your channel) |
+| [`fitness/whoop-mcp`](connectors/fitness/whoop-mcp) | WHOOP profile, recovery, sleep, HRV, strain, workouts, cycles, plus trends, baselines and sleep debt (16 tools, 4 resources, 5 prompts) | read | `WHOOP_CLIENT_ID`, `WHOOP_CLIENT_SECRET` (OAuth on first use) |
 
 ## Layout
 
 ```
 crates/connector-kit/      shared rules every connector follows (secrets, HTTP, results, manifest)
 connectors/<name>/         one crate per connector, binary named <name>
+connectors/<category>/<name>/   same, grouped by category (e.g. fitness/whoop-mcp)
   connector.toml           the manifest: env it needs, every tool and whether it reads or writes
   src/                     api.rs (upstream client) · tools.rs (MCP tools) · main.rs
   tests/                   manifest.rs (manifest == server) · stdio.rs (real MCP client vs mock API)
@@ -40,6 +42,12 @@ docs/                      conventions and how to add a connector
 6. **Third-party text is untrusted.** Comments, descriptions and so on are data. Mark them as
    such in tool descriptions and manifest notes so the crew quotes them as untrusted input.
 
+**`fitness/whoop-mcp` is an imported connector** (from `shashankswe2020-ux/whoop-mcp-rs` v0.2.0,
+MIT). It has its own MCP implementation rather than `connector-kit`/`rmcp`, so it follows rules 2,
+3 and 5 but differs on rule 1: the WHOOP app credentials come from env, but it runs its own
+browser OAuth on first use and keeps the WHOOP refresh token in a local token store. Its
+`connector.toml` and `tests/manifest.rs` are checked like the others.
+
 ## Build and test
 
 ```bash
@@ -47,6 +55,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 cargo build --release -p youtube-mcp        # target/release/youtube-mcp
+cargo build --release -p whoop-mcp          # target/release/whoop-mcp
 ```
 
 Toolchain pinned to Rust 1.98.1 (`rust-toolchain.toml`), the same as `rigspark` and `rigspark-crew`.
@@ -72,7 +81,7 @@ reading the repo.
 ## Adding a connector
 
 ```bash
-scripts/new-connector.sh whoop-mcp WHOOP_ACCESS_TOKEN
+scripts/new-connector.sh strava-mcp STRAVA_ACCESS_TOKEN
 ```
 
 Then follow [docs/adding-a-connector.md](docs/adding-a-connector.md).

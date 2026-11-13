@@ -14,15 +14,18 @@ jobs:
     outputs:
       name: ${{ steps.p.outputs.name }}
       version: ${{ steps.p.outputs.version }}
+      dir: ${{ steps.p.outputs.dir }}
     steps:
       - uses: actions/checkout@v4
       - id: p
         run: |
           tag="${GITHUB_REF_NAME}"
           name="${tag%-v*}"; version="${tag##*-v}"
-          test -d "connectors/$name" || { echo "no connector $name"; exit 1; }
-          grep -q "^version = \"$version\"" "connectors/$name/connector.toml" || { echo "connector.toml version != $version"; exit 1; }
-          echo "name=$name" >> "$GITHUB_OUTPUT"; echo "version=$version" >> "$GITHUB_OUTPUT"
+          # connectors/<name> or connectors/<category>/<name>
+          dir=$(ls -d "connectors/$name" connectors/*/"$name" 2>/dev/null | head -1)
+          test -f "$dir/connector.toml" || { echo "no connector $name"; exit 1; }
+          grep -q "^version = \"$version\"" "$dir/connector.toml" || { echo "connector.toml version != $version"; exit 1; }
+          echo "name=$name" >> "$GITHUB_OUTPUT"; echo "version=$version" >> "$GITHUB_OUTPUT"; echo "dir=$dir" >> "$GITHUB_OUTPUT"
 
   build:
     needs: meta
@@ -44,7 +47,9 @@ jobs:
         run: |
           n=${{ needs.meta.outputs.name }}; v=${{ needs.meta.outputs.version }}; t=${{ matrix.target }}
           mkdir -p dist/pkg
-          cp "target/$t/release/$n" "connectors/$n/connector.toml" "connectors/$n/README.md" dist/pkg/
+          d=${{ needs.meta.outputs.dir }}
+          cp "target/$t/release/$n" "$d/connector.toml" "$d/README.md" dist/pkg/
+          if [ -f "$d/LICENSE" ]; then cp "$d/LICENSE" dist/pkg/; fi
           tar -C dist/pkg -czf "dist/$n-$v-$t.tar.gz" .
           (cd dist && shasum -a 256 "$n-$v-$t.tar.gz" > "$n-$v-$t.tar.gz.sha256")
       - uses: actions/upload-artifact@v4

@@ -37,7 +37,8 @@ jobs:
         run: cargo test --workspace
       - name: manifests print
         run: |
-          for m in connectors/*/; do
-            n=$(basename "$m")
+          for m in connectors/*/connector.toml connectors/*/*/connector.toml; do
+            [ -f "$m" ] || continue
+            n=$(basename "$(dirname "$m")")
             cargo run -q -p "$n" -- --manifest > /dev/null
           done
