@@ -3,8 +3,8 @@
 
 [connector]
 name = "youtube-mcp"
-version = "0.2.0"
-description = "YouTube research, analytics and channel management: search, keyword research, outliers, hot videos, channel performance, competitors, comment insights, title/SEO scoring, earnings, transcripts, your own analytics, edits/uploads, and local history. vidIQ-style, free."
+version = "0.3.0"
+description = "YouTube research, analytics and channel management: search, keyword research, outliers, hot videos, channel performance, competitors, comment insights, title/SEO scoring, earnings, transcripts, your own analytics and a one-call channel health check (CTR vs retention diagnosis), edits/uploads, and local history. vidIQ-style, free."
 transport = "stdio"
 command = "youtube-mcp"
 
@@ -174,6 +174,13 @@ name = "channel_analytics"
 access = "read"
 cost = 0
 requires = "oauth"
+
+[[tools]]
+name = "channel_insights"
+access = "read"
+cost = 1
+requires = "oauth"
+notes = "From ViewsFix: joins CTR, retention, traffic, audience and last-48h reports; diagnoses each video as packaging or content. Cached for an hour."
 
 [[tools]]
 name = "update_video"

@@ -4,7 +4,7 @@ YouTube research, analytics and channel management over MCP: the tools vidIQ cha
 credits for, free. It is built on YouTube's own APIs, plus two switchable unofficial
 sources and a local history database.
 
-**31 tools and 6 prompts.** Everything is read-only except the five channel-owner writes,
+**32 tools and 6 prompts.** Everything is read-only except the five channel-owner writes,
 which are declared `access = "write"` so the crew asks before each one.
 
 ## vidIQ → youtube-mcp
@@ -21,7 +21,8 @@ which are declared `access = "write"` so the crew asks before each one.
 | Score title | `title_score` | Transparent checklist across 10 titles at once |
 | Earnings calculator / video estimate | `earnings_calculate`, `video_earnings` | Public RPM ranges by category, country tier and format |
 | Video transcript | `video_transcript` | Caption tracks, manual preferred, with timestamps *(unofficial)* |
-| Channel analytics (retention, traffic, revenue…) | `channel_analytics` | YouTube Analytics API with 13 presets, including YouTube search terms *(OAuth)* |
+| Channel analytics (retention, traffic, revenue…) | `channel_analytics` | YouTube Analytics API with 16 presets, including YouTube search terms, CTR per video and external sites *(OAuth)* |
+| Channel audit / "why is this video stuck?" | `channel_insights` | One call: per-video CTR and retention against your averages, diagnosed as packaging or content, plus traffic, audience and the last 48 hours *(OAuth, from ViewsFix)* |
 | Update video / thumbnail, reply to comment, upload | `update_video`, `set_thumbnail`, `reply_to_comment`, `post_comment`, `upload_video` | *(OAuth, write)* |
 | Video change history / title-thumbnail wins | `packaging_changes`, `video_history` | From local snapshots, with views per hour before and after each change |
 | Generate titles, script, description, chapters, replies | prompts `title_ideas`, `video_script`, `seo_description`, `video_chapters`, `comment_replies`, `content_ideas` | The host's own model writes, guided by the data tools |
@@ -39,7 +40,7 @@ output notes.
 | --- | --- | --- |
 | Public | `search` 100 · `get_videos` 1 · `get_channel` 1 · `channel_videos` 3 · `channel_playlists` 1 · `playlist_items` 1 · `video_comments` 1 · `trending_videos` 1 | |
 | Research | `keyword_research` ~102 · `outliers` ~102 (3 in channel mode) · `hot_videos` ~102 (1 without a query) · `channel_performance` 3–6 · `similar_channels` ~104 · `comment_insights` 1/100 comments · `seo_audit` 1 · `video_earnings` 1–2 · `title_score` 0 · `earnings_calculate` 0 | |
-| Your channel | `my_channels` 1 · `channel_analytics` (separate quota) · `update_video` ~51 · `set_thumbnail` 50 · `reply_to_comment` 50 · `post_comment` 50 · `upload_video` ~1,600 | OAuth |
+| Your channel | `my_channels` 1 · `channel_analytics` (separate quota) · `channel_insights` ~1 · `update_video` ~51 · `set_thumbnail` 50 · `reply_to_comment` 50 · `post_comment` 50 · `upload_video` ~1,600 | OAuth |
 | Unofficial | `keyword_ideas` 0 · `video_transcript` 0 | switchable |
 | History | `video_history` 0 · `channel_history` 0 · `packaging_changes` 0 · `track_channel` ~3/channel | local |
 
@@ -118,5 +119,26 @@ All scores are transparent heuristics, and each result includes the inputs behin
   lifetime average views per video (keyword mode).
 - **Title score** is a 100-point checklist: length, keyword and its position, number,
   hook word, caps, punctuation, clutter, word count.
+- **Channel insights diagnosis** compares each video's thumbnail CTR and average percentage
+  watched with the channel's (CTR = clicks ÷ impressions over every video; retention weighted
+  by views). More than 15% below on CTR only is **packaging** (fix the title and thumbnail),
+  on retention only is **content** (fix the hook and pacing), on both is
+  **packaging_and_content**; 15% above on both is **outperforming**. Videos with fewer than
+  1,000 impressions or 100 views get no diagnosis.
+- **Views per minute** (in `channel_performance`) = views ÷ runtime in minutes, to see which
+  lengths earn their time.
 - **Earnings** use mid RPMs by category for US/UK/CA/AU long-form, × a country-tier factor,
   with Shorts at about $0.06/1k. The range shown is ×0.5 to ×1.8.
+
+## Privacy
+
+Comment text is third-party data. Before it reaches the model, email addresses and phone
+numbers in it are replaced with `[email removed]` and `[phone removed]` (a phone is `+` and
+8–15 digits, or 10–15 digits; view counts, dates and timestamps are left alone).
+
+## Credits
+
+`channel_insights`, the CTR, per-video retention and external-site presets, views per minute
+and comment scrubbing are ported from ViewsFix (yt-reviewer)'s private YouTube MCP tools. Its
+CTR tool asked for `impressions,impressionClickThroughRate`; YouTube's metric names are
+`videoThumbnailImpressions` and `videoThumbnailImpressionsClickRate`, used here.

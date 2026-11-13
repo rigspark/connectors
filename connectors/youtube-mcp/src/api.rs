@@ -648,7 +648,7 @@ impl YouTube {
                     id: s(&it["id"]),
                     video_id: opt_s(&it["snippet"]["videoId"]),
                     author: s(&top["authorDisplayName"]),
-                    text: trim(&strip_html(raw), COMMENT),
+                    text: crate::pii::scrub_contacts(&trim(&strip_html(raw), COMMENT)),
                     likes: top["likeCount"].as_u64().unwrap_or_default(),
                     published_at: s(&top["publishedAt"]),
                     replies: it["snippet"]["totalReplyCount"]

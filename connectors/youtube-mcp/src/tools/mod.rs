@@ -50,6 +50,9 @@ pub struct YouTubeServer {
     pub(crate) store: Option<Arc<Store>>,
     pub(crate) unofficial: bool,
     pub(crate) upload_dir: Option<PathBuf>,
+    /// `channel_insights` results for an hour, keyed by channel and dates (as ViewsFix did).
+    pub(crate) insights_cache:
+        Arc<std::sync::Mutex<std::collections::HashMap<String, (i64, serde_json::Value)>>>,
     tool_router: ToolRouter<Self>,
     prompt_router: PromptRouter<Self>,
 }
@@ -87,6 +90,7 @@ impl YouTubeServer {
             store,
             unofficial: cfg.unofficial,
             upload_dir: cfg.upload_dir.clone(),
+            insights_cache: Arc::default(),
             tool_router: Self::public_router()
                 + Self::research_router()
                 + Self::owner_router()
@@ -120,6 +124,14 @@ impl YouTubeServer {
         match &self.oauth {
             Some(o) => o.access_token(self.yt.http()).await,
             None => Err(YouTubeError::NoOAuth),
+        }
+    }
+
+    /// Error text with OAuth secrets removed, for notes inside a successful result.
+    pub(crate) fn clean(&self, e: &YouTubeError) -> String {
+        match &self.oauth {
+            Some(o) => scrub(&e.to_string(), &o.secrets()),
+            None => e.to_string(),
         }
     }
 

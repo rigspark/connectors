@@ -319,7 +319,43 @@ pub struct Performance {
     /// Best publishing hours (UTC, 3-hour windows).
     pub best_hours_utc: Vec<SlotStat>,
     pub top_videos: Vec<Outlier>,
+    /// Most-watched per minute of runtime (views ÷ length): which lengths earn their time.
+    pub top_by_views_per_minute: Vec<Dense>,
     pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct Dense {
+    pub id: String,
+    pub title: String,
+    pub views: u64,
+    pub duration_secs: u64,
+    pub views_per_minute: f64,
+    pub is_short: bool,
+    pub url: String,
+}
+
+/// Videos ranked by views per minute of runtime (ViewsFix's view/duration ratio), top `n`.
+pub fn views_per_minute(videos: &[Video], n: usize) -> Vec<Dense> {
+    let mut v: Vec<Dense> = videos
+        .iter()
+        .filter_map(|v| {
+            let d = v.duration_secs.filter(|d| *d > 0)?;
+            let views = v.views?;
+            Some(Dense {
+                id: v.id.clone(),
+                title: v.title.clone(),
+                views,
+                duration_secs: d,
+                views_per_minute: round1(views as f64 / (d as f64 / 60.0)),
+                is_short: is_short(v),
+                url: v.url.clone(),
+            })
+        })
+        .collect();
+    v.sort_by(|a, b| b.views_per_minute.total_cmp(&a.views_per_minute));
+    v.truncate(n);
+    v
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -440,6 +476,7 @@ pub fn performance(videos: &[Video], now: i64) -> Performance {
         best_weekdays: rank(by_day, &|d| DAYS[d as usize].to_owned()),
         best_hours_utc: rank(by_hour, &|h| format!("{h:02}:00-{:02}:00", h + 3)),
         top_videos: top,
+        top_by_views_per_minute: views_per_minute(videos, 5),
         notes,
     }
 }
@@ -1045,6 +1082,22 @@ mod tests {
             duration_secs: Some(600),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn ranks_views_per_minute_of_runtime() {
+        let mut short = vid("s", 3_000, 5.0, "c", "short");
+        short.duration_secs = Some(30);
+        let long = vid("l", 30_000, 5.0, "c", "long"); // 600 s
+        let mut none = vid("n", 9_999, 5.0, "c", "no duration");
+        none.duration_secs = None;
+        let r = views_per_minute(&[long, short, none], 5);
+        assert_eq!(r.len(), 2);
+        assert_eq!(
+            (r[0].id.as_str(), r[0].views_per_minute, r[0].is_short),
+            ("s", 6000.0, true)
+        );
+        assert_eq!((r[1].id.as_str(), r[1].views_per_minute), ("l", 3000.0));
     }
 
     fn chan(id: &str, subs: u64) -> Channel {

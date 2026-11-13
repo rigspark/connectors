@@ -12,6 +12,7 @@ use serde_json::json;
 use super::{YouTubeServer, date, non_empty, rfc3339};
 use crate::api::YouTubeError;
 use crate::ids;
+use crate::insights;
 use crate::owner::{self, AnalyticsQuery, UploadMeta, VideoChanges};
 
 #[derive(Debug, Clone, Copy, Deserialize, serde::Serialize, schemars::JsonSchema)]
@@ -38,6 +39,12 @@ pub enum Preset {
     ShortsVsLongform,
     Revenue,
     RevenuePerVideo,
+    /// Thumbnail impressions and click-through rate per video.
+    CtrByVideo,
+    /// Average view duration and percentage watched per video.
+    RetentionByVideo,
+    /// Views from other websites, by domain.
+    ExternalSources,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -61,6 +68,18 @@ pub struct AnalyticsArgs {
     pub max_results: Option<u32>,
     /// One of your channels (UC…); default: the signed-in channel.
     pub channel_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct InsightsArgs {
+    /// YYYY-MM-DD, default 28 days ago.
+    pub start_date: Option<String>,
+    /// YYYY-MM-DD, default today.
+    pub end_date: Option<String>,
+    /// One of your channels (UC…); default: the signed-in channel.
+    pub channel_id: Option<String>,
+    /// Skip the one-hour cache and fetch again. Default false.
+    pub fresh: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -192,9 +211,7 @@ impl YouTubeServer {
                     "audience_retention needs `video`".into(),
                 ));
             }
-            if name == "search_terms" {
-                q.filters = Some("insightTrafficSourceType==YT_SEARCH".into());
-            }
+            q.filters = owner::preset_filter(&name).map(str::to_owned);
         }
         if let Some(m) = a.metrics.filter(|m| !m.is_empty()) {
             q.metrics = m;
@@ -228,6 +245,184 @@ impl YouTubeServer {
         q.sort = non_empty(a.sort).or(q.sort);
         q.max_results = a.max_results.or(q.max_results).map(|m| m.clamp(1, 200));
         owner::analytics(&self.yt, &tok, q).await
+    }
+
+    async fn report(
+        &self,
+        tok: &connector_kit::Secret,
+        channel: &Option<String>,
+        (start, end): (&str, &str),
+        preset: &str,
+    ) -> Result<Vec<insights::Row>, YouTubeError> {
+        let (m, d, s, n) = owner::preset(preset).expect("known preset");
+        let q = AnalyticsQuery {
+            channel_id: channel.clone(),
+            start: start.to_owned(),
+            end: end.to_owned(),
+            metrics: m.iter().map(|x| (*x).to_owned()).collect(),
+            dimensions: d.iter().map(|x| (*x).to_owned()).collect(),
+            filters: owner::preset_filter(preset).map(str::to_owned),
+            sort: s.map(str::to_owned),
+            max_results: n,
+            currency: None,
+        };
+        Ok(owner::analytics(&self.yt, tok, q).await?.rows)
+    }
+
+    async fn channel_insights_inner(
+        &self,
+        a: InsightsArgs,
+    ) -> Result<serde_json::Value, YouTubeError> {
+        let today = now_unix();
+        let end = match a.end_date {
+            Some(d) => date("end_date", &d).map_err(YouTubeError::Invalid)?,
+            None => format_date(today),
+        };
+        let start = match a.start_date {
+            Some(d) => date("start_date", &d).map_err(YouTubeError::Invalid)?,
+            None => format_date(today - 28 * 86_400),
+        };
+        if start > end {
+            return Err(YouTubeError::Invalid("start_date is after end_date".into()));
+        }
+        let channel = non_empty(a.channel_id);
+        let key = format!("{}|{start}|{end}", channel.as_deref().unwrap_or("MINE"));
+        if !a.fresh.unwrap_or(false)
+            && let Some((at, v)) = self
+                .insights_cache
+                .lock()
+                .ok()
+                .and_then(|c| c.get(&key).cloned())
+            && today - at < 3600
+        {
+            let mut v = v;
+            v["cached_minutes_ago"] = json!((today - at) / 60);
+            return Ok(v);
+        }
+
+        let tok = self.token().await?;
+        let range = (start.as_str(), end.as_str());
+        let (r48s, r48e) = (format_date(today - 2 * 86_400), format_date(today));
+        let custom =
+            |metrics: &[&str], dims: &[&str], sort: Option<&str>, n: Option<u32>| AnalyticsQuery {
+                channel_id: channel.clone(),
+                start: r48s.clone(),
+                end: r48e.clone(),
+                metrics: metrics.iter().map(|x| (*x).to_owned()).collect(),
+                dimensions: dims.iter().map(|x| (*x).to_owned()).collect(),
+                sort: sort.map(str::to_owned),
+                max_results: n,
+                ..Default::default()
+            };
+        let (ctr, ret, traffic, external, demo, geo, days48, vids48) = tokio::join!(
+            self.report(&tok, &channel, range, "ctr_by_video"),
+            self.report(&tok, &channel, range, "retention_by_video"),
+            self.report(&tok, &channel, range, "traffic_sources"),
+            self.report(&tok, &channel, range, "external_sources"),
+            self.report(&tok, &channel, range, "audience_demographics"),
+            self.report(&tok, &channel, range, "audience_geography"),
+            owner::analytics(
+                &self.yt,
+                &tok,
+                custom(&["views"], &["day"], Some("day"), None)
+            ),
+            owner::analytics(
+                &self.yt,
+                &tok,
+                custom(&["views"], &["video"], Some("-views"), Some(10))
+            ),
+        );
+
+        let mut notes: Vec<String> = Vec::new();
+        let mut failed = 0;
+        let mut first_err: Option<YouTubeError> = None;
+        let mut take = |name: &str, r: Result<Vec<insights::Row>, YouTubeError>| match r {
+            Ok(rows) => rows,
+            Err(e) => {
+                notes.push(format!("{name}: {}", self.clean(&e)));
+                failed += 1;
+                first_err.get_or_insert(e);
+                Vec::new()
+            }
+        };
+        let ctr = take("click-through", ctr);
+        let ret = take("retention", ret);
+        let traffic = take("traffic sources", traffic);
+        let external = take("external sites", external);
+        let demo = take("demographics", demo);
+        let geo = take("geography", geo);
+        let days48 = take("last 48 hours", days48.map(|r| r.rows));
+        let vids48 = take("last 48 hours by video", vids48.map(|r| r.rows));
+        if failed == 8 {
+            return Err(first_err.expect("eight errors"));
+        }
+
+        let (mut videos, averages) = insights::videos(&ctr, &ret);
+        let traffic = insights::shares(&traffic, "insightTrafficSourceType");
+        let external = insights::shares(&external, "insightTrafficSourceDetail");
+        let mut countries = insights::shares(&geo, "country");
+        countries.truncate(10);
+        let audience = insights::audience(&demo);
+        let mut recent = insights::recent(&days48, &vids48);
+
+        // Analytics reports carry ids only; one Data API call names up to 50 videos.
+        let mut ids: Vec<String> = videos.iter().take(40).map(|v| v.video_id.clone()).collect();
+        for v in &recent.top_videos {
+            if !ids.contains(&v.video_id) && ids.len() < 50 {
+                ids.push(v.video_id.clone());
+            }
+        }
+        match self.yt.videos(&ids).await {
+            Ok(found) => {
+                self.remember_videos(&found);
+                let title = |id: &str| found.iter().find(|f| f.id == id).map(|f| f.title.clone());
+                for v in &mut videos {
+                    v.title = title(&v.video_id);
+                }
+                for v in &mut recent.top_videos {
+                    v.title = title(&v.video_id);
+                }
+            }
+            Err(e) => notes.push(format!("titles: {}", self.clean(&e))),
+        }
+
+        let headlines = insights::headlines(&videos, &averages, &traffic);
+        let traffic: Vec<serde_json::Value> = traffic
+            .into_iter()
+            .map(|s| {
+                let mut v = json!(s);
+                v["label"] = json!(insights::traffic_name(&s.name));
+                v
+            })
+            .collect();
+        notes.push(format!(
+            "CTR is compared only for videos with ≥ {} impressions and retention for ≥ {} views; \"below\" and \"above\" mean 15% off the channel average.",
+            insights::MIN_IMPRESSIONS as u64,
+            insights::MIN_VIEWS as u64
+        ));
+        notes.push("Analytics lag 1–3 days, so the last 48 hours are partial.".into());
+        let out = json!({
+            "channel": channel.as_deref().unwrap_or("signed-in channel"),
+            "start": start,
+            "end": end,
+            "headlines": headlines,
+            "channel_averages": averages,
+            "videos": videos,
+            "traffic_sources": traffic,
+            "external_sites": external,
+            "audience": {
+                "age_groups": audience.age_groups,
+                "gender": audience.gender,
+                "top_countries": countries,
+            },
+            "last_48_hours": recent,
+            "notes": notes,
+        });
+        if let Ok(mut c) = self.insights_cache.lock() {
+            c.retain(|_, (at, _)| today - *at < 3600);
+            c.insert(key, (today, out.clone()));
+        }
+        Ok(out)
     }
 }
 
@@ -265,6 +460,22 @@ impl YouTubeServer {
         Parameters(a): Parameters<AnalyticsArgs>,
     ) -> Result<CallToolResult, McpError> {
         self.finish(self.analytics_inner(a).await)
+    }
+
+    #[tool(
+        name = "channel_insights",
+        description = "One-call private health check of your own channel (OAuth), from ViewsFix: per-video thumbnail CTR and retention against your channel averages with a diagnosis (packaging = people skip the thumbnail, content = they click then leave), traffic sources with shares, external sites, age, gender and top countries, and the last 48 hours. Headlines first. Cached for an hour; ~1 Data API unit.",
+        annotations(
+            title = "Channel insights",
+            read_only_hint = true,
+            open_world_hint = true
+        )
+    )]
+    async fn channel_insights(
+        &self,
+        Parameters(a): Parameters<InsightsArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        self.finish(self.channel_insights_inner(a).await)
     }
 
     #[tool(

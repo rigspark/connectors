@@ -699,6 +699,159 @@ async fn analytics_reports_with_cached_token() -> anyhow::Result<()> {
     Ok(())
 }
 
+fn report(cols: &[&str], rows: Value) -> ResponseTemplate {
+    let headers: Vec<Value> = cols.iter().map(|c| json!({ "name": c })).collect();
+    ResponseTemplate::new(200).set_body_json(json!({ "columnHeaders": headers, "rows": rows }))
+}
+
+#[tokio::test]
+async fn channel_insights_joins_reports_and_survives_a_failed_section() -> anyhow::Result<()> {
+    let server = MockServer::start().await;
+    mock_token(&server, 1).await;
+    let an = || {
+        Mock::given(path("/analytics/reports"))
+            .and(header("authorization", "Bearer ya29.test-access"))
+    };
+    an().and(query_param(
+        "metrics",
+        "videoThumbnailImpressions,videoThumbnailImpressionsClickRate,views",
+    ))
+    .respond_with(report(
+        &[
+            "video",
+            "videoThumbnailImpressions",
+            "videoThumbnailImpressionsClickRate",
+            "views",
+        ],
+        json!([["good", 10000, 8.0, 900], ["weak", 10000, 2.0, 250]]),
+    ))
+    .mount(&server)
+    .await;
+    an().and(query_param(
+        "metrics",
+        "views,averageViewDuration,averageViewPercentage",
+    ))
+    .respond_with(report(
+        &[
+            "video",
+            "views",
+            "averageViewDuration",
+            "averageViewPercentage",
+        ],
+        json!([["good", 1000, 300, 60.0], ["weak", 300, 280, 55.0]]),
+    ))
+    .mount(&server)
+    .await;
+    an().and(query_param("dimensions", "insightTrafficSourceType"))
+        .respond_with(report(
+            &[
+                "insightTrafficSourceType",
+                "views",
+                "engagedViews",
+                "estimatedMinutesWatched",
+            ],
+            json!([
+                ["YT_SEARCH", 600, 500, 3000],
+                ["RELATED_VIDEO", 400, 300, 1500]
+            ]),
+        ))
+        .mount(&server)
+        .await;
+    an().and(query_param("filters", "insightTrafficSourceType==EXT_URL"))
+        .respond_with(
+            ResponseTemplate::new(403)
+                .set_body_json(json!({"error": {"code": 403, "message": "Forbidden"}})),
+        )
+        .mount(&server)
+        .await;
+    an().and(query_param("dimensions", "ageGroup,gender"))
+        .respond_with(report(
+            &["ageGroup", "gender", "viewerPercentage"],
+            json!([["age18-24", "male", 40.0], ["age25-34", "female", 60.0]]),
+        ))
+        .mount(&server)
+        .await;
+    an().and(query_param("dimensions", "country"))
+        .respond_with(report(
+            &[
+                "country",
+                "views",
+                "estimatedMinutesWatched",
+                "averageViewDuration",
+            ],
+            json!([["IN", 700, 2000, 200], ["US", 300, 900, 210]]),
+        ))
+        .mount(&server)
+        .await;
+    an().and(query_param("metrics", "views"))
+        .and(query_param("dimensions", "day"))
+        .respond_with(report(
+            &["day", "views"],
+            json!([["2026-11-11", 120], ["2026-11-12", 80]]),
+        ))
+        .mount(&server)
+        .await;
+    an().and(query_param("metrics", "views"))
+        .and(query_param("dimensions", "video"))
+        .respond_with(report(&["video", "views"], json!([["good", 150]])))
+        .mount(&server)
+        .await;
+    Mock::given(path("/videos"))
+        .and(header("x-goog-api-key", KEY))
+        .respond_with(items(vec![
+            video("good", 50_000, 10.0, A, "The one that worked"),
+            video("weak", 9_000, 12.0, A, "The one that didn't"),
+        ]))
+        .mount(&server)
+        .await;
+
+    let client = start(&server, &oauth_env()).await?;
+    let v = ok(&call(
+        &client,
+        "channel_insights",
+        json!({"start_date": "2026-10-01", "end_date": "2026-10-28"}),
+    )
+    .await);
+    assert_eq!(v["channel_averages"]["ctr_pct"], 5.0);
+    assert_eq!(v["videos"][0]["video_id"], "good");
+    assert_eq!(v["videos"][0]["title"], "The one that worked");
+    assert_eq!(v["videos"][0]["diagnosis"], "on_par");
+    assert_eq!(v["videos"][1]["diagnosis"], "packaging");
+    assert_eq!(v["traffic_sources"][0]["label"], "YouTube search");
+    assert_eq!(v["traffic_sources"][0]["share_pct"], 60.0);
+    assert_eq!(v["audience"]["age_groups"][0]["name"], "25-34");
+    assert_eq!(v["audience"]["top_countries"][0]["name"], "IN");
+    assert_eq!(v["last_48_hours"]["total_views"], 200);
+    assert_eq!(
+        v["last_48_hours"]["top_videos"][0]["title"],
+        "The one that worked"
+    );
+    assert!(
+        v["headlines"][0]
+            .as_str()
+            .unwrap()
+            .contains("below your 5% average CTR"),
+        "{}",
+        v["headlines"]
+    );
+    let notes = v["notes"].to_string();
+    assert!(notes.contains("external sites:"), "{notes}");
+    assert!(!notes.contains(REFRESH) && !notes.contains(CLIENT_SECRET));
+    assert_eq!(v["external_sites"], json!([]));
+
+    // second call within the hour comes from the cache
+    let again = ok(&call(
+        &client,
+        "channel_insights",
+        json!({"start_date": "2026-10-01", "end_date": "2026-10-28"}),
+    )
+    .await);
+    assert_eq!(again["cached_minutes_ago"], 0);
+    assert_eq!(again["videos"], v["videos"]);
+    client.cancel().await?;
+    Ok(())
+}
+
 #[tokio::test]
 async fn writes_update_reply_thumbnail_upload() -> anyhow::Result<()> {
     let server = MockServer::start().await;

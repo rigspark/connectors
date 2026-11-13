@@ -175,8 +175,39 @@ pub fn preset(name: &str) -> Option<PresetShape> {
             Some("-estimatedRevenue"),
             Some(25),
         ),
+        "ctr_by_video" => (
+            &[
+                "videoThumbnailImpressions",
+                "videoThumbnailImpressionsClickRate",
+                "views",
+            ],
+            &["video"],
+            Some("-videoThumbnailImpressions"),
+            Some(50),
+        ),
+        "retention_by_video" => (
+            &["views", "averageViewDuration", "averageViewPercentage"],
+            &["video"],
+            Some("-views"),
+            Some(50),
+        ),
+        "external_sources" => (
+            &["views", "estimatedMinutesWatched"],
+            &["insightTrafficSourceDetail"],
+            Some("-views"),
+            Some(25),
+        ),
         _ => return None,
     })
+}
+
+/// The fixed filter a preset needs, if any.
+pub fn preset_filter(name: &str) -> Option<&'static str> {
+    match name {
+        "search_terms" => Some("insightTrafficSourceType==YT_SEARCH"),
+        "external_sources" => Some("insightTrafficSourceType==EXT_URL"),
+        _ => None,
+    }
 }
 
 pub const PRESETS: &[&str] = &[
@@ -193,6 +224,9 @@ pub const PRESETS: &[&str] = &[
     "shorts_vs_longform",
     "revenue",
     "revenue_per_video",
+    "ctr_by_video",
+    "retention_by_video",
+    "external_sources",
 ];
 
 #[derive(Debug, Clone, Serialize)]

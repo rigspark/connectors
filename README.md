@@ -8,7 +8,7 @@ Private. Internal to RigSpark.
 
 | Connector | What it does | Access | Needs |
 | --- | --- | --- | --- |
-| [`youtube-mcp`](connectors/youtube-mcp) | vidIQ-style YouTube research (keywords, outliers, hot videos, competitors, comment insights, title/SEO scores, earnings, transcripts), your own analytics, video edits/uploads, local history. 31 tools, 6 prompts | read + 5 OAuth writes | `YOUTUBE_API_KEY` (+ OAuth for your channel) |
+| [`youtube-mcp`](connectors/youtube-mcp) | vidIQ-style YouTube research (keywords, outliers, hot videos, competitors, comment insights, title/SEO scores, earnings, transcripts), your own analytics and a one-call channel health check, video edits/uploads, local history. 32 tools, 6 prompts | read + 5 OAuth writes | `YOUTUBE_API_KEY` (+ OAuth for your channel) |
 
 ## Layout
 

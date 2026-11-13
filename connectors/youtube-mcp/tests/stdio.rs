@@ -87,7 +87,7 @@ async fn lists_tools_and_reports_identity() -> anyhow::Result<()> {
     );
 
     let tools = client.list_all_tools().await?;
-    assert_eq!(tools.len(), 31);
+    assert_eq!(tools.len(), 32);
     let ro = |n: &str| {
         tools
             .iter()

@@ -37,7 +37,7 @@ fn manifest_matches_server() {
     }) {
         assert!(e.secret, "{} must be marked secret", e.name);
     }
-    assert_eq!(m.tools.len(), 31);
+    assert_eq!(m.tools.len(), 32);
     assert_eq!(
         m.tools.iter().filter(|t| t.access == Access::Write).count(),
         5
