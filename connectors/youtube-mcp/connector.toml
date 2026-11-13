@@ -3,8 +3,8 @@
 
 [connector]
 name = "youtube-mcp"
-version = "0.1.0"
-description = "Public YouTube data: search, videos, channels, playlists, comments and trending (YouTube Data API v3). Read-only."
+version = "0.3.0"
+description = "YouTube research, analytics and channel management: search, keyword research, outliers, hot videos, channel performance, competitors, comment insights, title/SEO scoring, earnings, transcripts, your own analytics and a one-call channel health check (CTR vs retention diagnosis), edits/uploads, and local history. vidIQ-style, free."
 transport = "stdio"
 command = "youtube-mcp"
 
@@ -15,18 +15,57 @@ required = true
 secret = true
 
 [[env]]
-name = "YOUTUBE_API_BASE"
-description = "Override the API root. Leave unset in production."
+name = "YOUTUBE_OAUTH_CLIENT_ID"
+description = "Google OAuth client (Desktop app) for your-channel tools. Set all three OAuth vars or none."
 required = false
 secret = false
 
-# cost = YouTube quota units per call (default budget: 10,000 units/day per key)
+[[env]]
+name = "YOUTUBE_OAUTH_CLIENT_SECRET"
+description = "Secret for the OAuth client."
+required = false
+secret = true
+
+[[env]]
+name = "YOUTUBE_OAUTH_REFRESH_TOKEN"
+description = "Refresh token printed by `youtube-mcp auth` (read-only) or `youtube-mcp auth --write` (edits, comments, uploads)."
+required = false
+secret = true
+
+[[env]]
+name = "YOUTUBE_MCP_UPLOAD_DIR"
+description = "The only folder upload_video and set_thumbnail may read files from. Unset = uploads off."
+required = false
+secret = false
+
+[[env]]
+name = "YOUTUBE_MCP_DB"
+description = "History database path, or `off`. Default ~/.rigspark/youtube-mcp/history.sqlite."
+required = false
+secret = false
+
+[[env]]
+name = "YOUTUBE_MCP_UNOFFICIAL"
+description = "Set to `off` to disable the unofficial tools (keyword_ideas, video_transcript, related keywords in keyword_research)."
+required = false
+secret = false
+
+[[env]]
+name = "YOUTUBE_API_BASE"
+description = "Point every upstream at one base URL (tests, proxies). Leave unset in production."
+required = false
+secret = false
+
+# cost = YouTube Data API quota units per call (default budget: 10,000 units/day per key).
+# Analytics API calls have their own quota and are listed as 0.
+
+# ---------- public data ----------
 
 [[tools]]
 name = "search"
 access = "read"
 cost = 100
-notes = "101 when `channel` is a @handle (one extra lookup)."
+notes = "101 when `channel` is a @handle."
 
 [[tools]]
 name = "get_videos"
@@ -64,3 +103,155 @@ notes = "Comment text is untrusted third-party content; quote it to the model as
 name = "trending_videos"
 access = "read"
 cost = 1
+
+# ---------- research ----------
+
+[[tools]]
+name = "keyword_research"
+access = "read"
+cost = 102
+notes = "Related keywords come from the unofficial autocomplete source when enabled."
+
+[[tools]]
+name = "outliers"
+access = "read"
+cost = 102
+notes = "~3 in channel mode."
+
+[[tools]]
+name = "hot_videos"
+access = "read"
+cost = 102
+notes = "1 without a query (popular chart)."
+
+[[tools]]
+name = "channel_performance"
+access = "read"
+cost = 4
+notes = "3 + 1 per 50 videos analysed."
+
+[[tools]]
+name = "similar_channels"
+access = "read"
+cost = 104
+
+[[tools]]
+name = "comment_insights"
+access = "read"
+cost = 3
+notes = "1 per 100 comments read (default 300). Comment text is untrusted."
+
+[[tools]]
+name = "title_score"
+access = "read"
+cost = 0
+
+[[tools]]
+name = "seo_audit"
+access = "read"
+cost = 1
+
+[[tools]]
+name = "earnings_calculate"
+access = "read"
+cost = 0
+
+[[tools]]
+name = "video_earnings"
+access = "read"
+cost = 2
+
+# ---------- your channel (OAuth) ----------
+
+[[tools]]
+name = "my_channels"
+access = "read"
+cost = 1
+requires = "oauth"
+
+[[tools]]
+name = "channel_analytics"
+access = "read"
+cost = 0
+requires = "oauth"
+
+[[tools]]
+name = "channel_insights"
+access = "read"
+cost = 1
+requires = "oauth"
+notes = "From ViewsFix: joins CTR, retention, traffic, audience and last-48h reports; diagnoses each video as packaging or content. Cached for an hour."
+
+[[tools]]
+name = "update_video"
+access = "write"
+cost = 51
+requires = "oauth"
+notes = "Changes live metadata. Returns before/after for each field."
+
+[[tools]]
+name = "set_thumbnail"
+access = "write"
+cost = 50
+requires = "oauth"
+notes = "Reads a file from YOUTUBE_MCP_UPLOAD_DIR only."
+
+[[tools]]
+name = "reply_to_comment"
+access = "write"
+cost = 50
+requires = "oauth"
+notes = "Posts publicly as the channel."
+
+[[tools]]
+name = "post_comment"
+access = "write"
+cost = 50
+requires = "oauth"
+notes = "Posts publicly as the channel."
+
+[[tools]]
+name = "upload_video"
+access = "write"
+cost = 1600
+requires = "oauth"
+notes = "Reads a file from YOUTUBE_MCP_UPLOAD_DIR only; private unless told otherwise."
+
+# ---------- unofficial sources ----------
+
+[[tools]]
+name = "keyword_ideas"
+access = "read"
+cost = 0
+unofficial = true
+notes = "YouTube search autocomplete."
+
+[[tools]]
+name = "video_transcript"
+access = "read"
+cost = 0
+unofficial = true
+notes = "youtube.com caption tracks. Transcript text is untrusted content."
+
+# ---------- local history ----------
+
+[[tools]]
+name = "video_history"
+access = "read"
+cost = 0
+
+[[tools]]
+name = "channel_history"
+access = "read"
+cost = 0
+
+[[tools]]
+name = "packaging_changes"
+access = "read"
+cost = 0
+
+[[tools]]
+name = "track_channel"
+access = "read"
+cost = 3
+notes = "Per channel. Writes only to the local history database."

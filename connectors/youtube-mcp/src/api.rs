@@ -8,9 +8,11 @@ use connector_kit::{HttpClient, HttpError, Secret};
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::config::Endpoints;
 use crate::ids::ChannelRef;
 
-pub const DEFAULT_BASE: &str = "https://www.googleapis.com/youtube/v3";
+pub const UA: &str = concat!("rigspark-youtube-mcp/", env!("CARGO_PKG_VERSION"));
+
 const DESC: usize = 600;
 const COMMENT: usize = 1_000;
 
@@ -28,6 +30,16 @@ pub enum YouTubeError {
     RateLimited,
     #[error("comments are turned off for this video")]
     CommentsDisabled,
+    #[error(
+        "the signed-in Google account lacks permission for this ({0}). Re-run `youtube-mcp auth --write` for write tools, and make sure you own the channel or video."
+    )]
+    Forbidden(String),
+    #[error(
+        "channel-owner tools aren't set up: run `youtube-mcp auth` and pass YOUTUBE_OAUTH_CLIENT_ID, YOUTUBE_OAUTH_CLIENT_SECRET and YOUTUBE_OAUTH_REFRESH_TOKEN to the connector"
+    )]
+    NoOAuth,
+    #[error("{0}")]
+    Invalid(String),
     #[error("not found: {0}")]
     NotFound(String),
     #[error("YouTube refused the request ({status}, {reason}): {message}")]
@@ -54,6 +66,19 @@ fn classify(status: u16, body: &str) -> YouTubeError {
     let v: Value = serde_json::from_str(body).unwrap_or(Value::Null);
     let err = &v["error"];
     let message = err["message"].as_str().unwrap_or(body).to_owned();
+    if let Some(e) = v["error"].as_str() {
+        // OAuth token endpoint: {"error":"invalid_grant","error_description":"..."}
+        return match e {
+            "invalid_grant" => YouTubeError::Forbidden(
+                "the refresh token was revoked or expired; run `youtube-mcp auth` again".into(),
+            ),
+            _ => YouTubeError::Api {
+                status,
+                reason: e.to_owned(),
+                message: trim(v["error_description"].as_str().unwrap_or(e), 300),
+            },
+        };
+    }
     let reason = err["errors"][0]["reason"]
         .as_str()
         .or_else(|| err["details"][0]["reason"].as_str())
@@ -67,6 +92,13 @@ fn classify(status: u16, body: &str) -> YouTubeError {
         }
         "rateLimitExceeded" | "userRateLimitExceeded" => YouTubeError::RateLimited,
         "commentsDisabled" => YouTubeError::CommentsDisabled,
+        "insufficientPermissions"
+        | "forbidden"
+        | "ACCESS_TOKEN_SCOPE_INSUFFICIENT"
+        | "PERMISSION_DENIED" => YouTubeError::Forbidden(trim(&message, 200)),
+        "invalid_grant" => YouTubeError::Forbidden(
+            "the refresh token was revoked or expired; run `youtube-mcp auth` again".into(),
+        ),
         r if r.ends_with("NotFound") => YouTubeError::NotFound(message),
         _ if status == 404 => YouTubeError::NotFound(message),
         _ if message.contains("API key not valid") => YouTubeError::BadKey,
@@ -180,6 +212,8 @@ pub struct PlaylistItem {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Comment {
     pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub video_id: Option<String>,
     pub author: String,
     pub text: String,
     pub likes: u64,
@@ -281,7 +315,7 @@ pub fn video_from(v: &Value) -> Video {
     }
 }
 
-fn channel_from(v: &Value) -> Channel {
+pub fn channel_from(v: &Value) -> Channel {
     let sn = &v["snippet"];
     let st = &v["statistics"];
     let id = s(&v["id"]);
@@ -307,9 +341,18 @@ fn channel_from(v: &Value) -> Channel {
 
 // ---------- client ----------
 
+/// Whose comments to list.
+#[derive(Debug, Clone, Copy)]
+pub enum CommentTarget<'a> {
+    Video(&'a str),
+    /// Every thread on any of the channel's videos.
+    Channel(&'a str),
+}
+
 #[derive(Clone)]
 pub struct YouTube {
     http: HttpClient,
+    ep: Endpoints,
 }
 
 /// Search filters beyond the query text.
@@ -332,22 +375,26 @@ pub struct SearchParams {
 }
 
 impl YouTube {
-    pub fn new(key: Secret, base: &str) -> Result<Self, YouTubeError> {
-        let http = HttpClient::new(
-            base,
-            concat!("rigspark-youtube-mcp/", env!("CARGO_PKG_VERSION")),
-        )
-        .map_err(|e| YouTubeError::Http(e.to_string()))?
-        .with_auth_header("x-goog-api-key", key);
-        Ok(Self { http })
+    pub fn new(key: Secret, ep: Endpoints) -> Result<Self, YouTubeError> {
+        let http = HttpClient::new(ep.data.clone(), UA)
+            .map_err(|e| YouTubeError::Http(e.to_string()))?
+            .with_auth_header("x-goog-api-key", key);
+        Ok(Self { http, ep })
     }
 
-    /// For tests: no retry delay.
-    pub fn with_http(http: HttpClient) -> Self {
-        Self { http }
+    pub fn http(&self) -> &HttpClient {
+        &self.http
     }
 
-    async fn get(&self, path: &str, q: Vec<(&str, String)>) -> Result<Value, YouTubeError> {
+    pub fn endpoints(&self) -> &Endpoints {
+        &self.ep
+    }
+
+    pub(crate) async fn get(
+        &self,
+        path: &str,
+        q: Vec<(&str, String)>,
+    ) -> Result<Value, YouTubeError> {
         Ok(self.http.get_json(path, &q).await?)
     }
 
@@ -564,7 +611,7 @@ impl YouTube {
     /// `commentThreads.list` — **1 unit**. Top-level comments only.
     pub async fn comments(
         &self,
-        video_id: &str,
+        target: CommentTarget<'_>,
         max_results: u32,
         order: Option<String>,
         search_terms: Option<String>,
@@ -572,7 +619,10 @@ impl YouTube {
     ) -> Result<Page<Comment>, YouTubeError> {
         let mut q = vec![
             ("part", "snippet".into()),
-            ("videoId", video_id.to_owned()),
+            match target {
+                CommentTarget::Video(id) => ("videoId", id.to_owned()),
+                CommentTarget::Channel(id) => ("allThreadsRelatedToChannelId", id.to_owned()),
+            },
             ("maxResults", max_results.to_string()),
             ("textFormat", "plainText".into()),
         ];
@@ -596,8 +646,9 @@ impl YouTube {
                     .unwrap_or_default();
                 Comment {
                     id: s(&it["id"]),
+                    video_id: opt_s(&it["snippet"]["videoId"]),
                     author: s(&top["authorDisplayName"]),
-                    text: trim(&strip_html(raw), COMMENT),
+                    text: crate::pii::scrub_contacts(&trim(&strip_html(raw), COMMENT)),
                     likes: top["likeCount"].as_u64().unwrap_or_default(),
                     published_at: s(&top["publishedAt"]),
                     replies: it["snippet"]["totalReplyCount"]
@@ -631,6 +682,70 @@ impl YouTube {
         let v = self.get("/videos", q).await?;
         let vids = items(&v).iter().map(video_from).collect();
         Ok(page(&v, vids))
+    }
+
+    /// `channels.list` for up to 50 ids — **1 unit**.
+    pub async fn channels(&self, ids: &[String]) -> Result<Vec<Channel>, YouTubeError> {
+        let mut out = Vec::new();
+        for chunk in ids.chunks(50) {
+            let v = self
+                .get(
+                    "/channels",
+                    vec![
+                        ("part", "snippet,statistics,contentDetails".into()),
+                        ("id", chunk.join(",")),
+                        ("maxResults", "50".into()),
+                    ],
+                )
+                .await?;
+            out.extend(items(&v).iter().map(channel_from));
+        }
+        Ok(out)
+    }
+
+    /// Raw `videos.list` items (full description, every tag, status) — **1 unit** per 50.
+    pub async fn videos_raw(&self, ids: &[String], part: &str) -> Result<Vec<Value>, YouTubeError> {
+        let mut out = Vec::new();
+        for chunk in ids.chunks(50) {
+            let v = self
+                .get(
+                    "/videos",
+                    vec![
+                        ("part", part.into()),
+                        ("id", chunk.join(",")),
+                        ("maxResults", "50".into()),
+                    ],
+                )
+                .await?;
+            out.extend(items(&v).iter().cloned());
+        }
+        Ok(out)
+    }
+
+    /// A channel's latest `n` (≤ 200) uploads with stats, newest first — **2 + n/50 units**
+    /// after the channel itself is known.
+    pub async fn uploads(&self, ch: &Channel, n: u32) -> Result<Vec<Video>, YouTubeError> {
+        let uploads = ch.uploads_playlist_id.clone().ok_or_else(|| {
+            YouTubeError::NotFound(format!("channel {} has no public uploads", ch.title))
+        })?;
+        let mut ids = Vec::new();
+        let mut token = None;
+        while (ids.len() as u32) < n {
+            let page = self
+                .playlist_items(&uploads, (n - ids.len() as u32).min(50), token)
+                .await?;
+            ids.extend(page.items.into_iter().map(|i| i.video_id));
+            token = page.next_page_token;
+            if token.is_none() {
+                break;
+            }
+        }
+        let mut vids = Vec::new();
+        for chunk in ids.chunks(50) {
+            vids.extend(self.videos(chunk).await?);
+        }
+        vids.sort_by_key(|v| ids.iter().position(|i| *i == v.id).unwrap_or(usize::MAX));
+        Ok(vids)
     }
 }
 

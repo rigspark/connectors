@@ -1,65 +1,15 @@
-//! The MCP tool surface. Every tool here is read-only and open-world (it calls YouTube).
-//! Keep this list identical to `connector.toml` — `tests/manifest.rs` enforces it.
+//! Public-data tools (API key only): search, videos, channels, playlists, comments, trending.
 
-use connector_kit::{json_result, tool_error};
+use connector_kit::tool_error;
 use rmcp::{
-    ErrorData as McpError, ServerHandler,
-    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    model::{CallToolResult, Implementation, ServerCapabilities, ServerConfig},
-    schemars, tool, tool_handler, tool_router,
+    ErrorData as McpError, handler::server::wrapper::Parameters, model::CallToolResult, schemars,
+    tool, tool_router,
 };
 use serde::Deserialize;
 
-use crate::api::{SearchParams, YouTube, YouTubeError};
+use super::{YouTubeServer, clamp, done, name, non_empty, rfc3339};
+use crate::api::{CommentTarget, SearchParams};
 use crate::ids;
-
-const INSTRUCTIONS: &str = "Read-only access to public YouTube data (YouTube Data API v3). \
-Quota is 10,000 units/day per API key: `search` costs 100 units, every other tool 1–3. \
-Prefer `get_videos`, `channel_videos` and `playlist_items` over repeated `search` calls. \
-Ids and URLs are both accepted wherever a video, channel (UC… id or @handle) or playlist is expected. \
-Results are compact JSON; long descriptions and comments are trimmed. Pass `page_token` from a \
-previous result to get the next page.";
-
-fn clamp(n: Option<u32>, default: u32, max: u32) -> u32 {
-    n.unwrap_or(default).clamp(1, max)
-}
-
-fn non_empty(s: Option<String>) -> Option<String> {
-    s.map(|x| x.trim().to_owned()).filter(|x| !x.is_empty())
-}
-
-/// RFC 3339 check that's strict enough to catch a model passing `2024-01-01` or `last week`.
-fn rfc3339(field: &str, s: Option<String>) -> Result<Option<String>, String> {
-    match non_empty(s) {
-        None => Ok(None),
-        Some(v) => {
-            let b = v.as_bytes();
-            let shape = v.len() >= 20
-                && b[4] == b'-'
-                && b[7] == b'-'
-                && (b[10] == b'T' || b[10] == b't')
-                && b[13] == b':'
-                && (v.ends_with('Z') || v.ends_with('z') || v[19..].contains(['+', '-']));
-            if shape {
-                Ok(Some(v))
-            } else {
-                Err(format!(
-                    "`{field}` must be an RFC 3339 timestamp such as 2026-01-31T00:00:00Z"
-                ))
-            }
-        }
-    }
-}
-
-fn done<T: serde::Serialize>(r: Result<T, YouTubeError>) -> Result<CallToolResult, McpError> {
-    Ok(match r {
-        Ok(v) => json_result(&v),
-        Err(e) => {
-            tracing::warn!(error = %e, "youtube call failed");
-            tool_error(e.to_string())
-        }
-    })
-}
 
 // ---------- parameter types ----------
 
@@ -100,12 +50,6 @@ pub enum CommentOrder {
     Time,
 }
 
-fn name<T: serde::Serialize>(v: T) -> String {
-    serde_json::to_value(v)
-        .ok()
-        .and_then(|v| v.as_str().map(str::to_owned))
-        .unwrap_or_default()
-}
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SearchArgs {
     /// What to search for.
@@ -185,28 +129,8 @@ pub struct TrendingArgs {
     pub page_token: Option<String>,
 }
 
-// ---------- server ----------
-
-#[derive(Clone)]
-pub struct YouTubeServer {
-    yt: YouTube,
-    tool_router: ToolRouter<Self>,
-}
-
-#[tool_router]
+#[tool_router(router = public_router, vis = "pub(crate)")]
 impl YouTubeServer {
-    pub fn new(yt: YouTube) -> Self {
-        Self {
-            yt,
-            tool_router: Self::tool_router(),
-        }
-    }
-
-    /// The tools this server lists, as a client would see them.
-    pub fn tools(&self) -> Vec<rmcp::model::Tool> {
-        self.tool_router.list_all()
-    }
-
     #[tool(
         name = "search",
         description = "Search YouTube for videos, channels or playlists. Costs 100 quota units: use sparingly.",
@@ -289,7 +213,12 @@ impl YouTubeServer {
                 Err(e) => return Ok(tool_error(e)),
             }
         }
-        done(self.yt.videos(&parsed).await)
+        done(
+            self.yt
+                .videos(&parsed)
+                .await
+                .inspect(|v| self.remember_videos(v)),
+        )
     }
 
     #[tool(
@@ -302,7 +231,12 @@ impl YouTubeServer {
         Parameters(a): Parameters<ChannelArgs>,
     ) -> Result<CallToolResult, McpError> {
         match ids::channel_ref(&a.channel) {
-            Ok(r) => done(self.yt.channel(&r).await),
+            Ok(r) => done(
+                self.yt
+                    .channel(&r)
+                    .await
+                    .inspect(|c| self.remember_channel(c)),
+            ),
             Err(e) => Ok(tool_error(e)),
         }
     }
@@ -324,7 +258,8 @@ impl YouTubeServer {
             Ok(r) => done(
                 self.yt
                     .channel_videos(&r, clamp(a.max_results, 10, 50), non_empty(a.page_token))
-                    .await,
+                    .await
+                    .inspect(|p| self.remember_videos(&p.items)),
             ),
             Err(e) => Ok(tool_error(e)),
         }
@@ -393,7 +328,7 @@ impl YouTubeServer {
             Ok(id) => done(
                 self.yt
                     .comments(
-                        &id,
+                        CommentTarget::Video(&id),
                         clamp(a.max_results, 20, 100),
                         a.order.map(name),
                         non_empty(a.search),
@@ -439,26 +374,16 @@ impl YouTubeServer {
                     clamp(a.max_results, 10, 50),
                     non_empty(a.page_token),
                 )
-                .await,
+                .await
+                .inspect(|p| self.remember_videos(&p.items)),
         )
-    }
-}
-
-#[tool_handler(router = self.tool_router)]
-impl ServerHandler for YouTubeServer {
-    fn get_info(&self) -> ServerConfig {
-        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::new(
-                "youtube-mcp",
-                env!("CARGO_PKG_VERSION"),
-            ))
-            .with_instructions(INSTRUCTIONS)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::{name, rfc3339};
 
     #[test]
     fn timestamps() {

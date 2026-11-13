@@ -8,7 +8,7 @@ Private. Internal to RigSpark.
 
 | Connector | What it does | Access | Needs |
 | --- | --- | --- | --- |
-| [`youtube-mcp`](connectors/youtube-mcp) | Search, videos, channels, playlists, comments, trending (YouTube Data API v3) | read | `YOUTUBE_API_KEY` |
+| [`youtube-mcp`](connectors/youtube-mcp) | vidIQ-style YouTube research (keywords, outliers, hot videos, competitors, comment insights, title/SEO scores, earnings, transcripts), your own analytics and a one-call channel health check, video edits/uploads, local history. 32 tools, 6 prompts | read + 5 OAuth writes | `YOUTUBE_API_KEY` (+ OAuth for your channel) |
 | [`fitness/whoop-mcp`](connectors/fitness/whoop-mcp) | WHOOP profile, recovery, sleep, HRV, strain, workouts, cycles, plus trends, baselines and sleep debt (16 tools, 4 resources, 5 prompts) | read | `WHOOP_CLIENT_ID`, `WHOOP_CLIENT_SECRET` (OAuth on first use) |
 
 ## Layout

@@ -23,8 +23,9 @@ pub mod result;
 pub mod secret;
 pub mod serve;
 pub mod text;
+pub mod time;
 
-pub use http::{HttpClient, HttpError};
+pub use http::{Body, HttpClient, HttpError, Method, Req, Response};
 pub use manifest::{Access, Manifest};
 pub use result::{json_result, tool_error};
 pub use secret::{Secret, SecretError, scrub};

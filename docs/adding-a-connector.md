@@ -45,3 +45,12 @@ The crew treats `access = "write"` as "ask first", so a write tool must:
 - do exactly one upstream change per call, described in the tool's description;
 - echo back what changed (ids and URLs) so the approval and audit log entries are meaningful;
 - be idempotent where the API allows (`idempotent_hint = true`).
+
+## Manifest flags
+
+- `requires = "oauth"` (or another credential name) on tools that need more than the
+  connector's required env. List the tool anyway, and return a clear tool error explaining
+  the setup when the credential is missing, so the manifest stays static.
+- `unofficial = true` on tools that use undocumented upstream endpoints. Give the host an
+  env switch to turn them off, never send the official API credential to them, and only
+  follow URLs from their responses when they point back at the provider's own hosts.

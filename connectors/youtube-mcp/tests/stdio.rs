@@ -20,7 +20,8 @@ async fn start(server: &MockServer) -> anyhow::Result<RunningService<RoleClient,
         tokio::process::Command::new(env!("CARGO_BIN_EXE_youtube-mcp")).configure(|cmd| {
             cmd.env("YOUTUBE_API_KEY", KEY)
                 .env("YOUTUBE_API_BASE", server.uri())
-                .env("RUST_LOG", "warn");
+                .env("RUST_LOG", "warn")
+                .env("YOUTUBE_MCP_DB", "off");
         }),
     )?;
     Ok(().serve(transport).await?)
@@ -86,25 +87,46 @@ async fn lists_tools_and_reports_identity() -> anyhow::Result<()> {
     );
 
     let tools = client.list_all_tools().await?;
-    let mut names: Vec<_> = tools.iter().map(|t| t.name.to_string()).collect();
-    names.sort();
-    assert_eq!(
-        names,
-        [
-            "channel_playlists",
-            "channel_videos",
-            "get_channel",
-            "get_videos",
-            "playlist_items",
-            "search",
-            "trending_videos",
-            "video_comments"
-        ]
-    );
-    assert!(
+    assert_eq!(tools.len(), 32);
+    let ro = |n: &str| {
         tools
             .iter()
-            .all(|t| t.annotations.as_ref().and_then(|a| a.read_only_hint) == Some(true))
+            .find(|t| t.name == n)
+            .and_then(|t| t.annotations.as_ref())
+            .and_then(|a| a.read_only_hint)
+    };
+    for n in [
+        "search",
+        "keyword_research",
+        "outliers",
+        "channel_analytics",
+        "video_transcript",
+        "track_channel",
+    ] {
+        assert_eq!(ro(n), Some(true), "{n}");
+    }
+    for n in [
+        "update_video",
+        "set_thumbnail",
+        "reply_to_comment",
+        "post_comment",
+        "upload_video",
+    ] {
+        assert_eq!(ro(n), Some(false), "{n}");
+    }
+    let prompts = client.list_all_prompts().await?;
+    let mut pn: Vec<_> = prompts.iter().map(|p| p.name.to_string()).collect();
+    pn.sort();
+    assert_eq!(
+        pn,
+        [
+            "comment_replies",
+            "content_ideas",
+            "seo_description",
+            "title_ideas",
+            "video_chapters",
+            "video_script"
+        ]
     );
     client.cancel().await?;
     Ok(())
